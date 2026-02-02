@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+from .merkle import MerkleTree
 from .models import (
     Action,
     AuditEntry,
@@ -72,6 +73,8 @@ class ComplianceEngine:
         self._frameworks = frameworks or list(ComplianceFramework)
         self._policies = policies or {}
         self._audit_trail: Dict[str, List[AuditEntry]] = defaultdict(list)
+        self._merkle_trees: Dict[str, MerkleTree] = defaultdict(MerkleTree)
+        self._global_merkle: MerkleTree = MerkleTree()
         self._compliance_history: Dict[str, List[ComplianceResult]] = defaultdict(list)
         self._action_count = 0
         self._threat_count = 0
@@ -128,14 +131,17 @@ class ComplianceEngine:
             recommendations=recommendations,
         )
 
-        # Record in audit trail
-        self._audit_trail[agent_id].append(AuditEntry(
+        # Record in audit trail (both plain list and Merkle tree)
+        entry = AuditEntry(
             agent_id=agent_id,
             action=action.description,
             result=status.value,
             risk_level=highest_risk,
             metadata={"framework": fw.value, "findings_count": len(findings)},
-        ))
+        )
+        self._audit_trail[agent_id].append(entry)
+        self._merkle_trees[agent_id].add_entry(entry)
+        self._global_merkle.add_entry(entry)
 
         self._compliance_history[agent_id].append(result)
 
@@ -244,6 +250,59 @@ class ComplianceEngine:
 
         # Default: pass (requirement met by having monitoring active)
         return True, ""
+
+    def get_merkle_root(self, agent_id: Optional[str] = None) -> Optional[str]:
+        """Get the Merkle root hash for an agent's (or global) audit trail.
+
+        Args:
+            agent_id: Agent ID, or None for the global audit trail root.
+
+        Returns:
+            The Merkle root hash string, or None if empty.
+        """
+        if agent_id:
+            return self._merkle_trees[agent_id].get_root()
+        return self._global_merkle.get_root()
+
+    def verify_audit_entry(self, agent_id: str, entry_index: int) -> bool:
+        """Verify a specific audit entry against the Merkle tree.
+
+        Args:
+            agent_id: The agent whose audit trail to verify.
+            entry_index: Zero-based index of the entry.
+
+        Returns:
+            True if the entry is verified intact.
+        """
+        tree = self._merkle_trees.get(agent_id)
+        if tree is None or tree.size == 0:
+            return False
+        return tree.verify_entry(entry_index)
+
+    def get_merkle_tree(self, agent_id: Optional[str] = None) -> MerkleTree:
+        """Get the Merkle tree for an agent or the global tree.
+
+        Args:
+            agent_id: Agent ID, or None for the global tree.
+
+        Returns:
+            The MerkleTree instance.
+        """
+        if agent_id:
+            return self._merkle_trees[agent_id]
+        return self._global_merkle
+
+    def export_merkle_tree(self, agent_id: Optional[str] = None) -> Dict[str, Any]:
+        """Export the Merkle tree structure for visualization.
+
+        Args:
+            agent_id: Agent ID, or None for the global tree.
+
+        Returns:
+            JSON-serializable tree structure.
+        """
+        tree = self._merkle_trees[agent_id] if agent_id else self._global_merkle
+        return tree.export_tree()
 
     @staticmethod
     def _risk_higher(a: RiskLevel, b: RiskLevel) -> bool:

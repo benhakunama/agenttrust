@@ -7,6 +7,7 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+from .abg import AgentBehavioralGraph
 from .models import Action, ActionType, Trace
 
 
@@ -33,6 +34,7 @@ class ObserveTracer:
         self._max_actions = max_actions
         self._lock = threading.Lock()
         self._action_count = 0
+        self._abg = AgentBehavioralGraph()
 
     def start_trace(self, agent_id: str, metadata: Optional[Dict[str, Any]] = None) -> Trace:
         """Start a new trace for an agent.
@@ -111,6 +113,18 @@ class ObserveTracer:
             if trace_id and trace_id in self._active_traces:
                 self._active_traces[trace_id].actions.append(action)
 
+            # Build ABG node
+            data_pattern = (metadata or {}).get("data_pattern", "")
+            tool = (metadata or {}).get("tool", "")
+            self._abg.add_action(
+                agent_id=agent_id,
+                action_type=action_type.value if hasattr(action_type, "value") else str(action_type),
+                tool=tool,
+                data_pattern=data_pattern,
+                description=description,
+                metadata=metadata,
+            )
+
             self._enforce_limits()
 
         return action
@@ -166,6 +180,14 @@ class ObserveTracer:
         """Get the total number of actions recorded."""
         return self._action_count
 
+    def get_abg(self) -> AgentBehavioralGraph:
+        """Get the Agent Behavioral Graph.
+
+        Returns:
+            The AgentBehavioralGraph instance built from recorded actions.
+        """
+        return self._abg
+
     def clear(self) -> None:
         """Clear all traces and actions."""
         with self._lock:
@@ -174,6 +196,7 @@ class ObserveTracer:
             self._active_traces.clear()
             self._agent_actions.clear()
             self._action_count = 0
+            self._abg = AgentBehavioralGraph()
 
     def _enforce_limits(self) -> None:
         """Enforce memory limits on stored data."""

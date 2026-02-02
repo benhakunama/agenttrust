@@ -18,9 +18,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from .abg import ABGEdge, ABGNode, AgentBehavioralGraph, PatternGraph
 from .comply import ComplianceEngine
 from .config import Config
-from .identity import AgentIdentityManager
+from .fingerprint import BehavioralFingerprint, FingerprintVector
+from .identity import AgentIdentityManager, ATPHandshake, HandshakePhase
+from .merkle import MerkleNode, MerkleProof, MerkleTree
 from .models import (
     Action,
     ActionType,
@@ -36,24 +39,20 @@ from .models import (
     VerificationResult,
 )
 from .observe import ObserveTracer
-from .protect import BehavioralFirewall
+from .protect import BehavioralFirewall, SequenceAnalyzer
 from .scoring import TrustScoreEngine
 
 __version__ = "0.1.0"
 __all__ = [
     "AgentTrust",
     "init",
+    # Models
     "Action",
     "ActionType",
     "AgentCertificate",
-    "BehavioralFirewall",
-    "ComplianceEngine",
     "ComplianceFramework",
     "ComplianceResult",
     "ComplianceStatus",
-    "Config",
-    "AgentIdentityManager",
-    "ObserveTracer",
     "ResponseAction",
     "RiskLevel",
     "ThreatDetection",
@@ -61,6 +60,25 @@ __all__ = [
     "TrustDecision",
     "TrustScoreEngine",
     "VerificationResult",
+    # Core engines
+    "BehavioralFirewall",
+    "ComplianceEngine",
+    "Config",
+    "AgentIdentityManager",
+    "ObserveTracer",
+    # New modules
+    "ABGEdge",
+    "ABGNode",
+    "AgentBehavioralGraph",
+    "ATPHandshake",
+    "BehavioralFingerprint",
+    "FingerprintVector",
+    "HandshakePhase",
+    "MerkleNode",
+    "MerkleProof",
+    "MerkleTree",
+    "PatternGraph",
+    "SequenceAnalyzer",
 ]
 
 

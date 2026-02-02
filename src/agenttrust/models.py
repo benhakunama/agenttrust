@@ -182,6 +182,19 @@ class AuditEntry:
 
 
 @dataclass
+class HandshakeRecord:
+    """Record of an ATP handshake for audit purposes."""
+
+    agent_id: str = ""
+    session_id: str = ""
+    success: bool = False
+    trust_score: float = 0.0
+    phases_completed: List[str] = field(default_factory=list)
+    timestamp: float = field(default_factory=time.time)
+    error: str = ""
+
+
+@dataclass
 class RiskMetrics:
     """Risk dashboard metrics."""
 

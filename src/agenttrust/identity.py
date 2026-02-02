@@ -3,19 +3,378 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 import uuid
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ec import (
+    ECDH,
     EllipticCurvePrivateKey,
     EllipticCurvePublicKey,
 )
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
+)
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from .models import AgentCertificate, VerificationResult
 from .scoring import TrustScoreEngine
+
+
+# ── ATP Handshake ──────────────────────────────────────────────────────────
+
+class HandshakePhase(str, Enum):
+    """Phases of the Agent Trust Protocol handshake."""
+
+    AGENT_HELLO = "AgentHello"
+    SERVER_HELLO = "ServerHello"
+    CERT_EXCHANGE = "CertExchange"
+    TRUST_VERIFY = "TrustVerify"
+    ACTION_BEGIN = "ActionBegin"
+    FAILED = "Failed"
+
+
+@dataclass
+class HandshakeMessage:
+    """A single message in the ATP handshake."""
+
+    phase: HandshakePhase
+    agent_id: str
+    nonce: str = ""
+    signature: str = ""
+    public_key: str = ""
+    trust_score: float = 0.0
+    session_id: str = ""
+    timestamp: float = field(default_factory=time.time)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HandshakeResult:
+    """Result of a completed ATP handshake."""
+
+    success: bool
+    agent_id: str
+    session_id: str = ""
+    session_key: bytes = b""
+    trust_score: float = 0.0
+    phases_completed: List[HandshakePhase] = field(default_factory=list)
+    error: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+
+class ATPHandshake:
+    """Agent Trust Protocol handshake implementation.
+
+    Implements the 5-phase handshake described in the AgentTrust paper:
+    1. AgentHello — Agent sends ID and nonce
+    2. ServerHello — Server responds with nonce and challenge
+    3. CertExchange — Agent sends certificate and signed challenge
+    4. TrustVerify — Server verifies signature and trust score
+    5. ActionBegin — Session established with derived session key
+
+    Uses ECDSA for signing nonce challenges and ECDH for session key derivation.
+    """
+
+    def __init__(
+        self,
+        identity_manager: AgentIdentityManager,
+        min_trust_score: float = 0.3,
+    ) -> None:
+        """Initialize the ATP handshake handler.
+
+        Args:
+            identity_manager: The identity manager for certificate/key access.
+            min_trust_score: Minimum trust score required for handshake success.
+        """
+        self._identity = identity_manager
+        self._min_trust = min_trust_score
+        self._pending: Dict[str, Dict[str, Any]] = {}  # session_id → handshake state
+        self._completed: List[HandshakeResult] = []
+
+    def initiate(self, agent_id: str) -> HandshakeMessage:
+        """Phase 1: Agent sends AgentHello.
+
+        Args:
+            agent_id: The agent initiating the handshake.
+
+        Returns:
+            HandshakeMessage for AgentHello phase.
+        """
+        session_id = str(uuid.uuid4())
+        agent_nonce = os.urandom(32).hex()
+
+        self._pending[session_id] = {
+            "agent_id": agent_id,
+            "agent_nonce": agent_nonce,
+            "phase": HandshakePhase.AGENT_HELLO,
+            "started_at": time.time(),
+        }
+
+        cert = self._identity.get_agent(agent_id)
+        public_key = cert.public_key if cert else ""
+
+        return HandshakeMessage(
+            phase=HandshakePhase.AGENT_HELLO,
+            agent_id=agent_id,
+            nonce=agent_nonce,
+            public_key=public_key,
+            session_id=session_id,
+        )
+
+    def respond(self, session_id: str) -> HandshakeMessage:
+        """Phase 2: Server sends ServerHello with challenge nonce.
+
+        Args:
+            session_id: The session from Phase 1.
+
+        Returns:
+            HandshakeMessage for ServerHello phase.
+        """
+        state = self._pending.get(session_id)
+        if not state or state["phase"] != HandshakePhase.AGENT_HELLO:
+            return HandshakeMessage(
+                phase=HandshakePhase.FAILED,
+                agent_id="",
+                session_id=session_id,
+                metadata={"error": "Invalid session or phase"},
+            )
+
+        server_nonce = os.urandom(32).hex()
+        state["server_nonce"] = server_nonce
+        state["phase"] = HandshakePhase.SERVER_HELLO
+
+        return HandshakeMessage(
+            phase=HandshakePhase.SERVER_HELLO,
+            agent_id=state["agent_id"],
+            nonce=server_nonce,
+            session_id=session_id,
+        )
+
+    def exchange_cert(self, session_id: str) -> HandshakeMessage:
+        """Phase 3: Agent sends certificate and signed challenge.
+
+        Signs the combined nonces (agent_nonce + server_nonce) using ECDSA.
+
+        Args:
+            session_id: The session from Phase 2.
+
+        Returns:
+            HandshakeMessage for CertExchange phase with signature.
+        """
+        state = self._pending.get(session_id)
+        if not state or state["phase"] != HandshakePhase.SERVER_HELLO:
+            return HandshakeMessage(
+                phase=HandshakePhase.FAILED,
+                agent_id="",
+                session_id=session_id,
+                metadata={"error": "Invalid session or phase"},
+            )
+
+        agent_id = state["agent_id"]
+        private_key = self._identity._private_keys.get(agent_id)
+        if not private_key:
+            return HandshakeMessage(
+                phase=HandshakePhase.FAILED,
+                agent_id=agent_id,
+                session_id=session_id,
+                metadata={"error": "No private key for agent"},
+            )
+
+        # Sign the combined nonces
+        challenge = f"{state['agent_nonce']}:{state['server_nonce']}".encode("utf-8")
+        signature = private_key.sign(challenge, ec.ECDSA(hashes.SHA256()))
+        state["signature"] = signature
+        state["phase"] = HandshakePhase.CERT_EXCHANGE
+
+        cert = self._identity.get_agent(agent_id)
+
+        return HandshakeMessage(
+            phase=HandshakePhase.CERT_EXCHANGE,
+            agent_id=agent_id,
+            signature=signature.hex(),
+            public_key=cert.public_key if cert else "",
+            session_id=session_id,
+        )
+
+    def verify(self, session_id: str) -> HandshakeMessage:
+        """Phase 4: Server verifies signature and trust score.
+
+        Args:
+            session_id: The session from Phase 3.
+
+        Returns:
+            HandshakeMessage for TrustVerify phase.
+        """
+        state = self._pending.get(session_id)
+        if not state or state["phase"] != HandshakePhase.CERT_EXCHANGE:
+            return HandshakeMessage(
+                phase=HandshakePhase.FAILED,
+                agent_id="",
+                session_id=session_id,
+                metadata={"error": "Invalid session or phase"},
+            )
+
+        agent_id = state["agent_id"]
+        cert = self._identity.get_agent(agent_id)
+        if not cert:
+            state["phase"] = HandshakePhase.FAILED
+            return HandshakeMessage(
+                phase=HandshakePhase.FAILED,
+                agent_id=agent_id,
+                session_id=session_id,
+                metadata={"error": "Agent certificate not found"},
+            )
+
+        # Verify signature
+        try:
+            public_key = serialization.load_pem_public_key(cert.public_key.encode("utf-8"))
+            challenge = f"{state['agent_nonce']}:{state['server_nonce']}".encode("utf-8")
+            public_key.verify(state["signature"], challenge, ec.ECDSA(hashes.SHA256()))  # type: ignore[arg-type]
+        except Exception:
+            state["phase"] = HandshakePhase.FAILED
+            return HandshakeMessage(
+                phase=HandshakePhase.FAILED,
+                agent_id=agent_id,
+                session_id=session_id,
+                metadata={"error": "Signature verification failed"},
+            )
+
+        # Check trust score
+        trust_score = self._identity.get_trust_score(agent_id)
+        if trust_score < self._min_trust:
+            state["phase"] = HandshakePhase.FAILED
+            return HandshakeMessage(
+                phase=HandshakePhase.FAILED,
+                agent_id=agent_id,
+                trust_score=trust_score,
+                session_id=session_id,
+                metadata={"error": f"Trust score {trust_score:.2f} below minimum {self._min_trust:.2f}"},
+            )
+
+        state["trust_score"] = trust_score
+        state["phase"] = HandshakePhase.TRUST_VERIFY
+
+        return HandshakeMessage(
+            phase=HandshakePhase.TRUST_VERIFY,
+            agent_id=agent_id,
+            trust_score=trust_score,
+            session_id=session_id,
+        )
+
+    def complete(self, session_id: str) -> HandshakeResult:
+        """Phase 5: Derive session key and establish session.
+
+        Uses ECDH to derive a shared session key.
+
+        Args:
+            session_id: The session from Phase 4.
+
+        Returns:
+            HandshakeResult with session key and status.
+        """
+        state = self._pending.get(session_id)
+        if not state or state["phase"] != HandshakePhase.TRUST_VERIFY:
+            result = HandshakeResult(
+                success=False,
+                agent_id=state["agent_id"] if state else "",
+                session_id=session_id,
+                error="Invalid session or phase",
+            )
+            self._completed.append(result)
+            return result
+
+        agent_id = state["agent_id"]
+
+        # Derive session key using ECDH + HKDF
+        private_key = self._identity._private_keys.get(agent_id)
+        if private_key:
+            # Generate ephemeral key pair for session
+            ephemeral_private = ec.generate_private_key(ec.SECP256R1())
+            peer_public = private_key.public_key()
+
+            shared_secret = ephemeral_private.exchange(ECDH(), peer_public)
+
+            # Derive session key with HKDF
+            session_key = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=f"{state['agent_nonce']}:{state['server_nonce']}".encode("utf-8"),
+                info=b"agenttrust-atp-session",
+            ).derive(shared_secret)
+        else:
+            session_key = b""
+
+        state["phase"] = HandshakePhase.ACTION_BEGIN
+
+        result = HandshakeResult(
+            success=True,
+            agent_id=agent_id,
+            session_id=session_id,
+            session_key=session_key,
+            trust_score=state.get("trust_score", 0.0),
+            phases_completed=[
+                HandshakePhase.AGENT_HELLO,
+                HandshakePhase.SERVER_HELLO,
+                HandshakePhase.CERT_EXCHANGE,
+                HandshakePhase.TRUST_VERIFY,
+                HandshakePhase.ACTION_BEGIN,
+            ],
+        )
+
+        self._completed.append(result)
+        del self._pending[session_id]
+
+        return result
+
+    def perform_full_handshake(self, agent_id: str) -> HandshakeResult:
+        """Perform a complete 5-phase handshake in one call.
+
+        Convenience method that runs all phases sequentially.
+
+        Args:
+            agent_id: The agent to handshake with.
+
+        Returns:
+            HandshakeResult with the outcome.
+        """
+        msg1 = self.initiate(agent_id)
+        if msg1.phase == HandshakePhase.FAILED:
+            return HandshakeResult(success=False, agent_id=agent_id, error="AgentHello failed")
+
+        msg2 = self.respond(msg1.session_id)
+        if msg2.phase == HandshakePhase.FAILED:
+            return HandshakeResult(success=False, agent_id=agent_id, error="ServerHello failed")
+
+        msg3 = self.exchange_cert(msg1.session_id)
+        if msg3.phase == HandshakePhase.FAILED:
+            return HandshakeResult(
+                success=False, agent_id=agent_id,
+                error=msg3.metadata.get("error", "CertExchange failed"),
+            )
+
+        msg4 = self.verify(msg1.session_id)
+        if msg4.phase == HandshakePhase.FAILED:
+            return HandshakeResult(
+                success=False, agent_id=agent_id,
+                error=msg4.metadata.get("error", "TrustVerify failed"),
+            )
+
+        return self.complete(msg1.session_id)
+
+    def get_handshake_history(self) -> List[HandshakeResult]:
+        """Get history of completed handshakes.
+
+        Returns:
+            List of HandshakeResult objects.
+        """
+        return list(self._completed)
 
 
 class AgentIdentityManager:
