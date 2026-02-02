@@ -1,0 +1,140 @@
+@page {
+    size: letter;
+    margin: 25mm 20mm 25mm 20mm;
+}
+
+body {
+    font-family: "Georgia", "Times New Roman", "DejaVu Serif", serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+    max-width: 100%;
+}
+
+h1 {
+    font-size: 20pt;
+    text-align: center;
+    margin-top: 40px;
+    margin-bottom: 5px;
+    color: #111;
+    line-height: 1.3;
+}
+
+h2 {
+    font-size: 14pt;
+    margin-top: 28px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 4px;
+    color: #222;
+    page-break-after: avoid;
+}
+
+h3 {
+    font-size: 12pt;
+    margin-top: 20px;
+    margin-bottom: 6px;
+    color: #333;
+    page-break-after: avoid;
+}
+
+h4 {
+    font-size: 11pt;
+    margin-top: 15px;
+    font-style: italic;
+    color: #444;
+    page-break-after: avoid;
+}
+
+p {
+    text-align: justify;
+    margin-bottom: 8px;
+}
+
+strong:first-child {
+    /* author/date lines */
+}
+
+code {
+    font-family: "Courier New", "DejaVu Sans Mono", monospace;
+    font-size: 9pt;
+    background: #f5f5f5;
+    padding: 1px 4px;
+    border-radius: 2px;
+}
+
+pre {
+    background: #f8f8f8;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 8.5pt;
+    line-height: 1.4;
+    overflow-x: auto;
+    page-break-inside: avoid;
+}
+
+pre code {
+    background: none;
+    padding: 0;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 15px 0;
+    font-size: 9.5pt;
+    page-break-inside: avoid;
+}
+
+th, td {
+    border: 1px solid #bbb;
+    padding: 5px 8px;
+    text-align: left;
+}
+
+th {
+    background: #f0f0f0;
+    font-weight: bold;
+}
+
+tr:nth-child(even) {
+    background: #fafafa;
+}
+
+blockquote {
+    border-left: 3px solid #ccc;
+    margin-left: 0;
+    padding-left: 15px;
+    color: #555;
+    font-style: italic;
+}
+
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 15px auto;
+    page-break-inside: avoid;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid #ccc;
+    margin: 20px 0;
+}
+
+/* Figure captions from alt text */
+img + em, figure figcaption {
+    display: block;
+    text-align: center;
+    font-size: 9.5pt;
+    color: #555;
+    margin-top: 5px;
+}
+
+/* References section */
+ol {
+    font-size: 10pt;
+    line-height: 1.5;
+}
