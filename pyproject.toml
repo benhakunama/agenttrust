@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agenttrust"
+version = "0.1.0"
+description = "Runtime security, observability, and compliance for AI agents"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "AgentTrust", email = "hello@agenttrust.dev"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "cryptography>=41.0",
+]
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.1.0"]
+crewai = ["crewai>=0.1.0"]
+autogen = ["pyautogen>=0.1.0"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0"]
+all = ["langchain-core>=0.1.0", "crewai>=0.1.0", "pyautogen>=0.1.0"]
+
+[project.scripts]
+agenttrust = "agenttrust.cli:cli"
+
+[project.urls]
+Homepage = "https://agenttrust.dev"
+Documentation = "https://docs.agenttrust.dev"
+Repository = "https://github.com/agenttrust/agenttrust"
+
+[tool.setuptools.packages.find]
+where = ["src"]
